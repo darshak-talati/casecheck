@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Immigration Document QA (CaseCheck)
 
-## Getting Started
+MVP for an Immigration Agency to verify and QA client documents.
 
-First, run the development server:
+## Tech Stack
+- **Framework**: Next.js 14+ (App Router)
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS + Shadcn UI concepts
+- **AI**: OpenAI (GPT-4o) for extraction and reasoning
+- **Parsers**: `pdfjs-dist` (PDF), `mammoth` (DOCX)
+- **Database**: Local JSON files in `/data`
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Prerequisites
+1. Node.js 18+
+2. OpenAI API Key
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Install Dependencies**
+   ```bash
+   npm install
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. **Environment Variables**
+   Create `.env.local` based on the example:
+   ```bash
+   OPENAI_API_KEY=sk-...
+   ```
 
-## Learn More
+3. **Run Development Server**
+   ```bash
+   npm run dev
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+4. **Open Browser**
+   Navigate to [http://localhost:3000](http://localhost:3000)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Features (MVP)
+- **Case Creation**: Upload multiple documents at once.
+- **Auto-Classification**: AI determines if a doc is a Form (Schedule A, Family Info) or Supporting Doc.
+- **Smart Extraction**: Extracts structured data (timelines, family members, addresses) from forms and evidence from supporting docs.
+- **Rules Engine**: Runs checks like "Missing Forms", "Education Gaps", "Timeline Coverage", "Evidence Matching".
+- **Findings Dashboard**: View flagged issues (Errors, Warnings) grouped by member.
+- **Rules Editor**: Toggle rules on/off or view configuration.
+- **Client Email Draft**: Auto-generates an email template with findings.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Directory Structure
+- `/app`: Next.js App Router pages and API routes
+- `/components`: UI components
+- `/lib`: Core logic
+  - `/ai`: OpenAI wrappers
+  - `/parsers`: PDF/DOCX extractors
+  - `/rules`: Engine and built-in checks
+  - `/storage`: JSON file persistence
+- `/data`: Local storage for cases and rules
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+- Files are stored in `/data/uploads`.
+- Cases are stored as JSON in `/data/cases`.
+- Rules are stored in `/data/rules/rules.json`.
