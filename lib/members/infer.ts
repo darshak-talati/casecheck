@@ -7,12 +7,12 @@ import { calculateAge } from "@/lib/rules/builtins";
  * This is the primary source of truth for family roster
  */
 export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[] {
-    const members: Member[] = [];
+    const rawMembers: Member[] = [];
 
     // Applicant (PA)
     if (extract.applicant?.name) {
         const age = calculateAge(extract.applicant.dob || undefined);
-        members.push({
+        rawMembers.push({
             id: uuidv4(),
             fullName: extract.applicant.name,
             relationship: "PA",
@@ -26,7 +26,7 @@ export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[]
     // Spouse
     if (extract.spouse?.name) {
         const age = calculateAge(extract.spouse.dob || undefined);
-        members.push({
+        rawMembers.push({
             id: uuidv4(),
             fullName: extract.spouse.name,
             relationship: "SPOUSE",
@@ -41,7 +41,7 @@ export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[]
     for (const child of extract.children) {
         if (!child.name) continue;
         const age = calculateAge(child.dob || undefined);
-        members.push({
+        rawMembers.push({
             id: uuidv4(),
             fullName: child.name,
             relationship: "CHILD",
@@ -52,7 +52,63 @@ export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[]
         });
     }
 
-    return members;
+    return deduplicateMembers(rawMembers);
+}
+
+/**
+ * Deduplicate members based on name similarity and DOB
+ */
+function deduplicateMembers(members: Member[]): Member[] {
+    const out: Member[] = [];
+
+    const normalize = (s: string) => {
+        return s.toLowerCase()
+            .replace(/,/g, ' ')
+            .split(/\s+/)
+            .filter(Boolean)
+            .sort()
+            .join(' ');
+    };
+
+    for (const m of members) {
+        const mNorm = normalize(m.fullName);
+        const match = out.find(existing => {
+            // Check DOB match first (strong signal)
+            const dobMatch = m.dob && existing.dob && m.dob === existing.dob;
+
+            // Check name similarity
+            const exNorm = normalize(existing.fullName);
+            const tokens1 = new Set(mNorm.split(' '));
+            const tokens2 = new Set(exNorm.split(' '));
+            const common = [...tokens1].filter(t => tokens2.has(t));
+
+            // Heuristic: if same DOB and significant name overlap (e.g. 2+ tokens or high Jaccard)
+            // or if names match exactly after normalization.
+            if (mNorm === exNorm) return true;
+            if (dobMatch && common.length >= 2) return true;
+
+            // Substring match for spelling variations (e.g. Ibukun Eyitwunmi vs Ibukun Eyiwunmi)
+            if (dobMatch && (mNorm.includes(exNorm) || exNorm.includes(mNorm))) return true;
+
+            return false;
+        });
+
+        if (match) {
+            // Merge: keep "higher" relationship if different
+            const relRank: Record<string, number> = { "PA": 3, "SPOUSE": 2, "CHILD": 1, "OTHER": 0 };
+            if (relRank[m.relationship] > relRank[match.relationship]) {
+                match.relationship = m.relationship;
+            }
+            // Add name as alias if different
+            if (m.fullName !== match.fullName && !match.aliases.includes(m.fullName)) {
+                match.aliases.push(m.fullName);
+            }
+        } else {
+            out.push(m);
+        }
+    }
+
+    return out;
 }
 
 /**
@@ -132,15 +188,14 @@ export function matchScheduleAToMember(
 
     if (!name) return undefined;
 
-    // First try exact name + DOB match
+    // Try exact DOB + Fuzzy Name match
     if (dob) {
         const match = members.find(m =>
-            m.fullName.trim().toLowerCase() === name.trim().toLowerCase() &&
-            m.dob === dob
+            m.dob === dob && findMemberByName([m], name)
         );
         if (match) return match;
     }
 
-    // Fallback to name only
+    // Fallback to name only (fuzzy)
     return findMemberByName(members, name);
 }

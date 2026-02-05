@@ -117,9 +117,27 @@ function checkGaps(c: Case, r: Rule): Finding[] {
 function checkRequiredDocs(c: Case, r: Rule): Finding[] {
     const out: Finding[] = [];
     const required = r.config?.requiredForm;
-    const adults = c.members.filter(m => !memberIsMinor(m));
 
-    for (const m of adults) {
+    // Explicitly check all members (adults and children)
+    for (const m of c.members) {
+        const isMinor = memberIsMinor(m);
+
+        if (isMinor) {
+            out.push({
+                id: uuidv4(),
+                ruleId: r.id,
+                severity: "INFO",
+                memberId: m.id,
+                memberName: m.fullName,
+                summary: `Verified: Minor - no ${required} required`,
+                recommendation: "Member age is under 18.",
+                clientMessage: `${m.fullName} is a minor (${m.age || 'Age unknown'}), so ${required} is not required.`,
+                docIds: [],
+                includeInEmail: false
+            });
+            continue;
+        }
+
         let present = false;
         if (required === "SCHEDULE_A") present = !!(c.extracted.scheduleAByMember && c.extracted.scheduleAByMember[m.id]);
         if (required === "FAMILY_INFO") present = !!(c.extracted.familyInfoByMember && c.extracted.familyInfoByMember[m.id]);
@@ -216,20 +234,22 @@ function checkIdentityMatch(c: Case, r: Rule): Finding[] {
     const out: Finding[] = [];
     const coreMembers = c.members.filter(m => ["PA", "SPOUSE", "CHILD"].includes(m.relationship));
 
+    const normalize = (s: string) => {
+        return s.toLowerCase()
+            .replace(/,/g, ' ')
+            .split(/\s+/)
+            .filter(Boolean)
+            .sort()
+            .join(' ');
+    };
+
     for (const m of coreMembers) {
         const supportExtracts = c.extracted.supportingByMember[m.id] || [];
-        const normalize = (s: string) => {
-            return s.toLowerCase()
-                .replace(/,/g, ' ')
-                .split(/\s+/)
-                .filter(Boolean)
-                .sort()
-                .join(' ');
-        };
-
         const mName = normalize(m.fullName);
 
         for (const ext of supportExtracts) {
+            const isIdDoc = ext.docType?.toLowerCase().match(/passport|id|birth|national/);
+
             if (ext.personName && mName) {
                 const sName = normalize(ext.personName);
                 if (mName !== sName && !mName.includes(sName) && !sName.includes(mName)) {
@@ -271,7 +291,7 @@ function checkIdentityMatch(c: Case, r: Rule): Finding[] {
                     }
                 }
 
-                if (!anyDobMatch && ext.docType?.toLowerCase().match(/passport|id|birth|national/)) {
+                if (!anyDobMatch && isIdDoc) {
                     out.push({
                         id: uuidv4(),
                         ruleId: r.id,
@@ -298,6 +318,50 @@ function checkIdentityMatch(c: Case, r: Rule): Finding[] {
                         docIds: [],
                         includeInEmail: false
                     });
+                }
+            }
+        }
+
+        // Schedule A identity vs Docs
+        const schedA = c.extracted.scheduleAByMember?.[m.id];
+        if (schedA?.identity) {
+            const sName = schedA.identity.name;
+            const sDob = schedA.identity.dob;
+
+            for (const ext of supportExtracts) {
+                if (ext.docType?.toLowerCase().match(/passport|id|birth|national/)) {
+                    if (sName && ext.personName) {
+                        const sn = normalize(sName);
+                        const en = normalize(ext.personName);
+                        if (sn === en || sn.includes(en) || en.includes(sn)) {
+                            out.push({
+                                id: uuidv4(),
+                                ruleId: r.id,
+                                severity: "INFO",
+                                memberId: m.id,
+                                memberName: m.fullName,
+                                summary: "Verified: Schedule A Name matches ID",
+                                recommendation: "Verified against " + ext.docType,
+                                clientMessage: `Name on Schedule A matches ${ext.docType}.`,
+                                docIds: [],
+                                includeInEmail: false
+                            });
+                        }
+                    }
+                    if (sDob && ext.dates?.includes(sDob)) {
+                        out.push({
+                            id: uuidv4(),
+                            ruleId: r.id,
+                            severity: "INFO",
+                            memberId: m.id,
+                            memberName: m.fullName,
+                            summary: "Verified: Schedule A DOB matches ID",
+                            recommendation: "Verified against " + ext.docType,
+                            clientMessage: `DOB on Schedule A matches ${ext.docType}.`,
+                            docIds: [],
+                            includeInEmail: false
+                        });
+                    }
                 }
             }
         }
@@ -334,7 +398,11 @@ function checkDateMatch(c: Case, r: Rule): Finding[] {
                     for (const d of ext.dates) {
                         if (rowFrom && (d === rowFrom || d.startsWith(rowFrom))) rowMatched = true;
                         if (rowTo && (d === rowTo || d.startsWith(rowTo))) rowMatched = true;
-                        if (rowFrom && d.includes(rowFrom.slice(0, 4))) rowMatched = true;
+
+                        const rowYearFrom = rowFrom?.slice(0, 4);
+                        const rowYearTo = rowTo?.slice(0, 4);
+                        if (rowYearFrom && d.includes(rowYearFrom)) rowMatched = true;
+                        if (rowYearTo && d.includes(rowYearTo)) rowMatched = true;
                     }
                 }
 
@@ -345,9 +413,10 @@ function checkDateMatch(c: Case, r: Rule): Finding[] {
                         severity: "INFO",
                         memberId: m.id,
                         memberName: m.fullName,
-                        summary: `Verified: ${section?.replace('_', ' ')} anchor found`,
-                        recommendation: "Found supporting document matching dates.",
-                        clientMessage: `Document ${ext.docType} confirms dates for ${row.activityType || row.institution}.`,
+                        summary: `Verified: ${section === 'education' ? 'Education' : 'Work History'} match`,
+                        details: { extracted: ext.dates, expected: [rowFrom, rowTo] },
+                        recommendation: `Found evidence in ${ext.docType}`,
+                        clientMessage: `Dates in ${ext.docType} confirm the entry for ${row.activityType || row.institution || 'specified period'}.`,
                         docIds: [],
                         includeInEmail: false
                     });
