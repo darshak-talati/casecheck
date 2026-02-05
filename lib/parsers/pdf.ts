@@ -1,24 +1,10 @@
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+// lib/parsers/pdf.ts
 
+/**
+ * PDF parsing is currently disabled to avoid pdfjs-dist worker bundling issues with Turbopack.
+ * For MVP, we skip text extraction from PDFs.
+ */
 export async function parsePdf(buffer: Buffer): Promise<string> {
-    const data = new Uint8Array(buffer);
-    const loadingTask = pdfjsLib.getDocument({
-        data,
-        useSystemFonts: true,
-        disableFontFace: true,
-    });
-
-    const doc = await loadingTask.promise;
-    let fullText = "";
-
-    for (let i = 1; i <= doc.numPages; i++) {
-        const page = await doc.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items
-            .map((item: any) => item.str)
-            .join(" ");
-        fullText += pageText + "\n\n";
-    }
-
-    return fullText;
+    console.warn("PDF parsing is currently disabled (pdfjs-dist removed).");
+    return "";
 }

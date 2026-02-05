@@ -1,4 +1,4 @@
-import { findGaps, formatMonth, compareMonths, addMonthsToKey } from '../lib/rules/builtins';
+import { findGaps, formatMonth, compareMonths, addMonthsToKey } from './builtins';
 
 /**
  * Test fixtures for month-level gap detection

@@ -3,14 +3,15 @@
 import { useState } from "react";
 import { Case, Finding, Rule } from "@/lib/types";
 import { Button } from "@/components/ui/button";
-import { analyzeCase, updateRule } from "@/app/actions";
-import { FileText, AlertTriangle, CheckCircle, RefreshCw, Mail, Settings } from "lucide-react";
+import { FileText, AlertTriangle, CheckCircle, RefreshCw, Mail, Settings, CheckSquare, Square } from "lucide-react";
+import { analyzeCase, updateRule, toggleFindingInEmail, bulkToggleFindings } from "@/app/actions";
 
 export default function CaseResultView({ initialCase, initialRules }: { initialCase: Case, initialRules?: Rule[] }) {
     const [caseData, setCaseData] = useState<Case>(initialCase);
     const [rules, setRules] = useState<Rule[]>(initialRules || []);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [activeTab, setActiveTab] = useState<"docs" | "findings" | "email" | "rules">("docs");
+    const [showVerified, setShowVerified] = useState(false);
 
     const handleAnalyze = async () => {
         setIsAnalyzing(true);
@@ -25,25 +26,55 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
 
     const handleToggleRule = async (rule: Rule) => {
         const updated = { ...rule, active: !rule.active };
-        setRules(rules.map(r => r.id === r.id ? (r.id === rule.id ? updated : r) : r));
+        setRules(rules.map(r => r.id === rule.id ? updated : r));
         await updateRule(updated);
     };
 
-    const findingsByMember = caseData.findings.reduce((acc, f) => {
-        const m = f.memberName || "General";
-        if (!acc[m]) acc[m] = [];
-        acc[m].push(f);
-        return acc;
-    }, {} as Record<string, Finding[]>);
+    const handleToggleFinding = async (findingId: string, include: boolean) => {
+        const updatedFindings = caseData.findings.map(f =>
+            f.id === findingId ? { ...f, includeInEmail: include } : f
+        );
+        setCaseData({ ...caseData, findings: updatedFindings });
+        await toggleFindingInEmail(caseData.id, findingId, include);
+    };
+
+    const handleBulkToggle = async (action: 'includeAll' | 'clearAll') => {
+        const updatedFindings = caseData.findings.map(f => {
+            if (action === 'includeAll' && f.severity === 'ERROR') return { ...f, includeInEmail: true };
+            if (action === 'clearAll') return { ...f, includeInEmail: false };
+            return f;
+        });
+        setCaseData({ ...caseData, findings: updatedFindings });
+        await bulkToggleFindings(caseData.id, action);
+    };
+
+    const findingsByMember = (showVerified ? caseData.findings : caseData.findings.filter(f => f.severity !== 'INFO'))
+        .reduce((acc, f) => {
+            const m = f.memberName || "General";
+            if (!acc[m]) acc[m] = [];
+            acc[m].push(f);
+            return acc;
+        }, {} as Record<string, Finding[]>);
 
     const generateEmail = () => {
+        const selectedFindings = caseData.findings.filter(f => f.includeInEmail);
+        if (selectedFindings.length === 0) return "No findings selected for email.";
+
         const lines = ["Dear Client,\n\nWe have reviewed your documents and found the following items to address:\n"];
-        Object.entries(findingsByMember).forEach(([name, findings]) => {
+
+        // Group selected findings by member
+        const grouped = selectedFindings.reduce((acc, f) => {
+            const m = f.memberName || "General";
+            if (!acc[m]) acc[m] = [];
+            acc[m].push(f);
+            return acc;
+        }, {} as Record<string, Finding[]>);
+
+        Object.entries(grouped).forEach(([name, findings]) => {
             lines.push(`\n### ${name}`);
             findings.forEach(f => {
-                if (f.severity === "ERROR" || f.severity === "WARNING") {
-                    lines.push(`- [${f.severity}] ${f.clientMessage}`);
-                }
+                lines.push(`- [${f.severity}] ${f.clientMessage}`);
+                if (f.recommendation) lines.push(`  *Action: ${f.recommendation}*`);
             });
         });
         lines.push("\nPlease provide the detailed information/documents for the above items.\n\nRegards,\nImmigration Team");
@@ -127,26 +158,72 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
 
                     {activeTab === "findings" && (
                         <div className="space-y-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <div className="flex items-center gap-2">
+                                    <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={showVerified}
+                                            onChange={(e) => setShowVerified(e.target.checked)}
+                                            className="rounded border-gray-300 text-primary focus:ring-primary"
+                                        />
+                                        Show Verified Checks
+                                    </label>
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button variant="outline" size="sm" onClick={() => handleBulkToggle('includeAll')}>Include All Errors</Button>
+                                    <Button variant="outline" size="sm" onClick={() => handleBulkToggle('clearAll')}>Clear Selection</Button>
+                                </div>
+                            </div>
+                            {Object.entries(findingsByMember).length === 0 && (
+                                <div className="text-center py-20 bg-slate-50 rounded-lg border-2 border-dashed">
+                                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                                    <h3 className="text-lg font-medium text-gray-900">No issues found</h3>
+                                    <p className="text-gray-500">Enable "Show Verified Checks" to see what was validated.</p>
+                                </div>
+                            )}
                             {Object.entries(findingsByMember).map(([member, list]) => (
                                 <div key={member}>
                                     <h3 className="font-bold text-lg mb-2">{member}</h3>
                                     <div className="space-y-3">
                                         {list.map(f => (
-                                            <div key={f.id} className={`p-4 border-l-4 rounded shadow-sm bg-white ${f.severity === 'ERROR' ? 'border-red-500' : f.severity === 'WARNING' ? 'border-yellow-500' : 'border-blue-500'}`}>
-                                                <div className="flex justify-between">
-                                                    <h4 className="font-semibold">{f.summary}</h4>
-                                                    <span className="text-xs font-bold uppercase tracking-wider">{f.severity}</span>
+                                            <div key={f.id} className={`p-4 border-l-4 rounded shadow-sm bg-white flex gap-4 ${f.severity === 'ERROR' ? 'border-red-500' :
+                                                f.severity === 'WARNING' ? 'border-yellow-500' :
+                                                    'border-green-500 bg-green-50/10'
+                                                }`}>
+                                                <div className="flex-shrink-0 pt-1">
+                                                    {f.severity === 'INFO' ? (
+                                                        <CheckCircle className="w-5 h-5 text-green-500" />
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => handleToggleFinding(f.id, !f.includeInEmail)}
+                                                            className="text-gray-400 hover:text-primary transition-colors"
+                                                            title={f.includeInEmail ? "Remove from email" : "Include in email"}
+                                                        >
+                                                            {f.includeInEmail ? <CheckSquare className="w-5 h-5 text-primary" /> : <Square className="w-5 h-5" />}
+                                                        </button>
+                                                    )}
                                                 </div>
-                                                <p className="text-sm text-gray-600 mt-1">{f.recommendation}</p>
-                                                <p className="text-xs text-gray-400 mt-2 font-mono">{f.ruleId}</p>
-                                                {f.details && (
-                                                    <details className="mt-2 text-xs">
-                                                        <summary className="cursor-pointer text-blue-600">View Details</summary>
-                                                        <pre className="mt-1 bg-gray-100 p-2 rounded overflow-auto">
-                                                            {JSON.stringify(f.details, null, 2)}
-                                                        </pre>
-                                                    </details>
-                                                )}
+                                                <div className="flex-grow">
+                                                    <div className="flex justify-between">
+                                                        <h4 className="font-semibold">{f.summary}</h4>
+                                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${f.severity === 'ERROR' ? 'bg-red-100 text-red-800' :
+                                                            f.severity === 'WARNING' ? 'bg-yellow-100 text-yellow-800' :
+                                                                'bg-green-100 text-green-800'
+                                                            }`}>{f.severity}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 mt-1">{f.clientMessage}</p>
+                                                    {f.recommendation && f.severity !== 'INFO' && <p className="text-xs text-gray-500 mt-2 italic font-medium">Recomendation: {f.recommendation}</p>}
+                                                    <p className="text-[10px] text-gray-400 mt-2 font-mono">{f.ruleId}</p>
+                                                    {f.details && (
+                                                        <details className="mt-2 text-xs text-gray-500">
+                                                            <summary className="cursor-pointer hover:text-blue-600">Trace Data</summary>
+                                                            <pre className="mt-1 bg-gray-50 p-2 rounded overflow-auto border text-[10px]">
+                                                                {JSON.stringify(f.details, null, 2)}
+                                                            </pre>
+                                                        </details>
+                                                    )}
+                                                </div>
                                             </div>
                                         ))}
                                     </div>

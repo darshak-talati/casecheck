@@ -7,7 +7,7 @@ MVP for an Immigration Agency to verify and QA client documents.
 - **Language**: TypeScript
 - **Styling**: Tailwind CSS + Shadcn UI concepts
 - **AI**: OpenAI (GPT-4o) for extraction and reasoning
-- **Parsers**: `pdfjs-dist` (PDF), `mammoth` (DOCX)
+- **Parsers**: `mammoth` (DOCX), [PDF Text Extraction currently disabled]
 - **Database**: Local JSON files in `/data`
 
 ## Prerequisites

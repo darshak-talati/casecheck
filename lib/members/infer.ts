@@ -52,36 +52,6 @@ export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[]
         });
     }
 
-    // Parents (optional, for completeness)
-    for (const parent of extract.parents) {
-        if (!parent.name) continue;
-        const age = calculateAge(parent.dob || undefined);
-        members.push({
-            id: uuidv4(),
-            fullName: parent.name,
-            relationship: "PARENT",
-            dob: parent.dob || undefined,
-            dobPrecision: determineDobPrecision(parent.dob),
-            age: age || undefined,
-            aliases: []
-        });
-    }
-
-    // Siblings (optional)
-    for (const sibling of extract.siblings) {
-        if (!sibling.name) continue;
-        const age = calculateAge(sibling.dob || undefined);
-        members.push({
-            id: uuidv4(),
-            fullName: sibling.name,
-            relationship: "SIBLING",
-            dob: sibling.dob || undefined,
-            dobPrecision: determineDobPrecision(sibling.dob),
-            age: age || undefined,
-            aliases: []
-        });
-    }
-
     return members;
 }
 
@@ -132,11 +102,22 @@ export function assignPAFromScheduleA(
  * Find member by name (fuzzy match)
  */
 export function findMemberByName(members: Member[], name: string): Member | undefined {
-    const normalized = name.trim().toLowerCase();
-    return members.find(m =>
-        m.fullName.trim().toLowerCase() === normalized ||
-        m.aliases.some(a => a.trim().toLowerCase() === normalized)
-    );
+    const normalize = (s: string) => {
+        return s.toLowerCase()
+            .replace(/,/g, ' ') // treat comma as space
+            .split(/\s+/)      // split by whitespace
+            .filter(Boolean)   // remove empty
+            .sort()            // sort tokens to be order-independent
+            .join(' ');        // join back
+    };
+
+    const target = normalize(name);
+    if (!target) return undefined;
+
+    return members.find(m => {
+        if (normalize(m.fullName) === target) return true;
+        return m.aliases.some(a => normalize(a) === target);
+    });
 }
 
 /**

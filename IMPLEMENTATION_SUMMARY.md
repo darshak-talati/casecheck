@@ -157,22 +157,47 @@ export async function toggleFindingInEmail(caseId: string, findingId: string, in
 
 ## ACCEPTANCE CRITERIA STATUS
 
-✅ **Issue 1**: Ages computed from DOB  
-✅ **Issue 2**: Spouse vs children determined from Family Info  
-✅ **Issue 3**: PA selected from Schedule A checkbox  
-✅ **Issue 4**: Month-level gap detection (no false positives)  
-⚠️ **Issue 5**: Findings non-technical display (backend ready, UI pending)  
-⚠️ **Issue 6**: Email validation controls (backend ready, UI pending)
+### 8. PDF Engine Removal (Fix for Turbopack Crash) ✅
+**Files Modified:**
+- `package.json` - Removed `pdfjs-dist` and `@types/pdfjs-dist`
+- `lib/parsers/pdf.ts` - Replaced with a stub to avoid worker bundling issues
+- `README.md` - Updated status
+
+**Status:**
+- Runtime crash fixed.
+- Text extraction from PDFs is currently skipped to ensure stability in Next.js 16 + Turbopack.
+- DOCX parsing (via `mammoth`) remains active.
+
+### 9. Email Selection UI ✅
+**Files Modified:**
+- `app/actions.ts` - Added `toggleFindingInEmail` and `bulkToggleFindings` server actions
+- `components/CaseResultView.tsx` - Added checkboxes, bulk actions, and updated email generator
+
+**Features:**
+- Findings can be individually toggled for inclusion in the draft.
+- Bulk actions: "Include All Errors" and "Clear Selection".
+- Email draft is generated dynamically based on selections.
+- Better data/evidence display with collapsible sections.
+
+## ACCEPTANCE CRITERIA STATUS (Updated)
+
+✅ **Overall Goal**: Fix runtime crash by removing `pdfjs-dist` dependency.
+✅ **Step 1**: Search and remove imports of `pdfjs-dist`.
+✅ **Step 2**: Remove functions calling pdfjs APIs.
+✅ **Step 3**: Fallback if previewing (UI currently skips preview for all, so no change needed).
+✅ **Step 4**: Verify build no longer references `pdf.worker.mjs`.
+✅ **Step 5**: Verify Analyze Case runs without crashing.
+
+### Immigration Rules Checklist:
+✅ **required_doc_check**: Missing Schedule A / Family Info for adults.
+✅ **gap_check**: Personal History, Education, and Address gaps.
+✅ **years_box_check**: Education summary box vs row duration (with intelligence).
+⚠️ **completeness_check**: (Backend skeleton exists).
+⚠️ **identity_match_check**: (Planned).
+⚠️ **overlap_check**: (Planned).
 
 ## NEXT STEPS
 
-1. Update `CaseResultView.tsx` to show ages in members list
-2. Implement human-readable findings display
-3. Add email selection checkboxes and bulk actions
-4. Test with real case data
-5. Verify PA detection works correctly
-
-## TESTING RECOMMENDATIONS
 
 1. Upload a case with IMM 5406 (Family Info) containing:
    - Applicant with DOB
