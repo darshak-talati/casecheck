@@ -1,6 +1,7 @@
 import { Member, FamilyInfoExtract, ScheduleAExtract } from "@/lib/types";
 import { v4 as uuidv4 } from "uuid";
 import { calculateAge } from "@/lib/rules/builtins";
+import { normalizeName, getTokenOverlapScore } from "@/lib/matching/name";
 
 /**
  * Build members from Family Info (IMM 5406)
@@ -61,33 +62,23 @@ export function buildMembersFromFamilyInfo(extract: FamilyInfoExtract): Member[]
 function deduplicateMembers(members: Member[]): Member[] {
     const out: Member[] = [];
 
-    const normalize = (s: string) => {
-        return s.toLowerCase()
-            .replace(/,/g, ' ')
-            .split(/\s+/)
-            .filter(Boolean)
-            .sort()
-            .join(' ');
-    };
-
     for (const m of members) {
-        const mNorm = normalize(m.fullName);
+        const mNorm = normalizeName(m.fullName);
         const match = out.find(existing => {
             // Check DOB match first (strong signal)
             const dobMatch = m.dob && existing.dob && m.dob === existing.dob;
 
             // Check name similarity
-            const exNorm = normalize(existing.fullName);
-            const tokens1 = new Set(mNorm.split(' '));
-            const tokens2 = new Set(exNorm.split(' '));
-            const common = [...tokens1].filter(t => tokens2.has(t));
+            const exNorm = normalizeName(existing.fullName);
 
-            // Heuristic: if same DOB and significant name overlap (e.g. 2+ tokens or high Jaccard)
-            // or if names match exactly after normalization.
+            // 1. Exact normalized match
             if (mNorm === exNorm) return true;
-            if (dobMatch && common.length >= 2) return true;
 
-            // Substring match for spelling variations (e.g. Ibukun Eyitwunmi vs Ibukun Eyiwunmi)
+            // 2. High fuzzy score overlap (>= 0.8)
+            const fuzzyScore = getTokenOverlapScore(m.fullName, existing.fullName);
+            if (fuzzyScore >= 0.8) return true;
+
+            // 3. Same DOB + Substring match for spelling variations
             if (dobMatch && (mNorm.includes(exNorm) || exNorm.includes(mNorm))) return true;
 
             return false;
@@ -96,7 +87,9 @@ function deduplicateMembers(members: Member[]): Member[] {
         if (match) {
             // Merge: keep "higher" relationship if different
             const relRank: Record<string, number> = { "PA": 3, "SPOUSE": 2, "CHILD": 1, "OTHER": 0 };
-            if (relRank[m.relationship] > relRank[match.relationship]) {
+            const mRank = relRank[m.relationship] ?? 0;
+            const matchRank = relRank[match.relationship] ?? 0;
+            if (mRank > matchRank) {
                 match.relationship = m.relationship;
             }
             // Add name as alias if different
@@ -140,9 +133,6 @@ export function assignPAFromScheduleA(
                 // Demote any other PA to OTHER (or keep as spouse/child if already set)
                 for (const other of members) {
                     if (other.id !== member.id && other.relationship === "PA") {
-                        // Try to infer correct relationship
-                        // If there's a spouse in family info, keep as SPOUSE
-                        // Otherwise set to OTHER
                         if (other.relationship === "PA") {
                             other.relationship = "OTHER";
                         }
@@ -158,22 +148,36 @@ export function assignPAFromScheduleA(
  * Find member by name (fuzzy match)
  */
 export function findMemberByName(members: Member[], name: string): Member | undefined {
-    const normalize = (s: string) => {
-        return s.toLowerCase()
-            .replace(/,/g, ' ') // treat comma as space
-            .split(/\s+/)      // split by whitespace
-            .filter(Boolean)   // remove empty
-            .sort()            // sort tokens to be order-independent
-            .join(' ');        // join back
-    };
-
-    const target = normalize(name);
+    const target = normalizeName(name);
     if (!target) return undefined;
 
     return members.find(m => {
-        if (normalize(m.fullName) === target) return true;
-        return m.aliases.some(a => normalize(a) === target);
+        if (normalizeName(m.fullName) === target) return true;
+        if (getTokenOverlapScore(m.fullName, name) >= 0.8) return true;
+        return m.aliases.some(a => normalizeName(a) === target || getTokenOverlapScore(a, name) >= 0.8);
     });
+}
+
+/**
+ * Match a generic person (from any form) to a member by name and DOB
+ */
+export function matchPersonToMember(
+    members: Member[],
+    name?: string | null,
+    dob?: string | null
+): Member | undefined {
+    if (!name) return undefined;
+
+    // 1. Try exact DOB + Fuzzy Name match
+    if (dob) {
+        const match = members.find(m =>
+            m.dob === dob && findMemberByName([m], name)
+        );
+        if (match) return match;
+    }
+
+    // 2. Fallback to name only (fuzzy)
+    return findMemberByName(members, name);
 }
 
 /**
@@ -183,19 +187,15 @@ export function matchScheduleAToMember(
     members: Member[],
     extract: ScheduleAExtract
 ): Member | undefined {
-    const name = extract.identity?.name;
-    const dob = extract.identity?.dob;
+    return matchPersonToMember(members, extract.identity?.name, extract.identity?.dob);
+}
 
-    if (!name) return undefined;
-
-    // Try exact DOB + Fuzzy Name match
-    if (dob) {
-        const match = members.find(m =>
-            m.dob === dob && findMemberByName([m], name)
-        );
-        if (match) return match;
-    }
-
-    // Fallback to name only (fuzzy)
-    return findMemberByName(members, name);
+/**
+ * Match Family Info to member by applicant name and DOB
+ */
+export function matchFamilyInfoToMember(
+    members: Member[],
+    extract: FamilyInfoExtract
+): Member | undefined {
+    return matchPersonToMember(members, extract.applicant?.name, extract.applicant?.dob);
 }

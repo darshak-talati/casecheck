@@ -98,6 +98,18 @@ export const SupportingExtractSchema = z.object({
 });
 export type SupportingExtract = z.infer<typeof SupportingExtractSchema>;
 
+// 4. Education Evidence Claim (for detailed education verification)
+export const EducationEvidenceClaimSchema = z.object({
+  credential: z.string().nullable(), // e.g., "Bachelor of Science", "Master of Arts"
+  fieldOfStudy: z.string().nullable(), // e.g., "Computer Science", "Business Administration"
+  institution: z.string().nullable(), // e.g., "University of Lagos"
+  fromMonth: z.string().nullable(), // YYYY-MM format
+  toMonth: z.string().nullable(), // YYYY-MM format or "PRESENT"
+  anchorSnippet: z.string().nullable(), // Human-readable date snippet from document
+  anchorKind: z.enum(["exact_dates", "year_range", "completion_date", "academic_year"]).default("exact_dates"),
+});
+export type EducationEvidenceClaim = z.infer<typeof EducationEvidenceClaimSchema>;
+
 
 // --- Main Data Models ---
 export const MemberSchema = z.object({
@@ -129,6 +141,7 @@ export type Document = z.infer<typeof DocumentSchema>;
 export const FindingSchema = z.object({
   id: z.string(),
   ruleId: z.string(),
+  status: z.enum(["FAIL", "PASS"]).default("FAIL"),
   severity: FindingSeverity,
   memberId: z.string().optional(),
   memberName: z.string().optional(),
@@ -136,13 +149,8 @@ export const FindingSchema = z.object({
   formType: z.string().optional(),
   section: z.string().optional(),
   summary: z.string(),
-  details: z.object({
-    extracted: z.any().optional(),
-    expected: z.any().optional(),
-    computed: z.any().optional(),
-    gap: z.any().optional(),
-    mismatch: z.any().optional(),
-  }).optional(),
+  verifiedLabel: z.string().optional(),
+  details: z.record(z.any()).optional(),
   recommendation: z.string(),
   clientMessage: z.string(),
   agentNotes: z.string().optional(),
@@ -154,6 +162,7 @@ export const ExtractedCaseDataSchema = z.object({
   scheduleAByMember: z.record(ScheduleAExtractSchema), // memberId -> Extract
   familyInfoByMember: z.record(FamilyInfoExtractSchema),
   supportingByMember: z.record(z.array(SupportingExtractSchema)),
+  educationClaimsByMember: z.record(z.array(EducationEvidenceClaimSchema)).default({}),
 });
 export type ExtractedCaseData = z.infer<typeof ExtractedCaseDataSchema>;
 

@@ -10,9 +10,12 @@ import { parsePdf } from "@/lib/parsers/pdf";
 import { parseDocx } from "@/lib/parsers/docx";
 import { classifyDocument } from "@/lib/ai/classify";
 import { extractScheduleA, extractFamilyInfo, extractSupportingDoc } from "@/lib/ai/extract";
+import { extractEducationClaims } from "@/lib/ai/extract-education";
 import { runRules } from "@/lib/rules/engine";
-import { buildMembersFromFamilyInfo, assignPAFromScheduleA, matchScheduleAToMember, findMemberByName } from "@/lib/members/infer";
+import { buildMembersFromFamilyInfo, assignPAFromScheduleA, matchScheduleAToMember, matchFamilyInfoToMember, findMemberByName } from "@/lib/members/infer";
 import { calculateAge } from "@/lib/rules/builtins";
+import { normalizeName } from "@/lib/matching/name";
+import { mapToCanonicalFormType } from "@/lib/forms/mapping";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
@@ -52,7 +55,12 @@ export async function createCase(formData: FormData) {
         updatedAt: new Date().toISOString(),
         documents,
         members: [],
-        extracted: { scheduleAByMember: {}, familyInfoByMember: {}, supportingByMember: {} },
+        extracted: {
+            scheduleAByMember: {},
+            familyInfoByMember: {},
+            supportingByMember: {},
+            educationClaimsByMember: {}
+        },
         findings: [],
         selectedFindingIds: []
     };
@@ -92,15 +100,24 @@ export async function analyzeCase(caseId: string) {
             const classification = await classifyDocument(text, doc.filename);
             if (classification) {
                 doc.kind = classification.kind;
-                doc.formType = classification.formType || undefined;
+                // Canonicalize formType immediately
+                doc.formType = mapToCanonicalFormType(classification.formType) || undefined;
                 doc.supportType = classification.supportType || undefined;
                 doc.meta = { ...doc.meta, detectedName: classification.detectedName, confidence: classification.confidence };
             }
+        } else if (doc.formType) {
+            // Ensure even existing formTypes are canonicalized
+            doc.formType = mapToCanonicalFormType(doc.formType);
         }
     }
 
     // 2. Clear previous extractions to rebuild
-    caseData.extracted = { scheduleAByMember: {}, familyInfoByMember: {}, supportingByMember: {} };
+    caseData.extracted = {
+        scheduleAByMember: {},
+        familyInfoByMember: {},
+        supportingByMember: {},
+        educationClaimsByMember: {}
+    };
     caseData.members = [];
 
     // 3. FIRST PASS: Extract Family Info (IMM 5406) to build member roster
@@ -113,7 +130,7 @@ export async function analyzeCase(caseId: string) {
         // Build members from this family info
         const newMembers = buildMembersFromFamilyInfo(extract);
 
-        // Merge with existing (avoid duplicates by name)
+        // Merge with existing (avoid duplicates by robust name matching)
         for (const newMember of newMembers) {
             const existing = findMemberByName(caseData.members, newMember.fullName);
             if (!existing) {
@@ -125,14 +142,22 @@ export async function analyzeCase(caseId: string) {
                     existing.dobPrecision = newMember.dobPrecision;
                     existing.age = newMember.age;
                 }
+                // Add alias if name differs slightly but matched
+                if (normalizeName(existing.fullName) !== normalizeName(newMember.fullName)) {
+                    if (!existing.aliases.includes(newMember.fullName)) {
+                        existing.aliases.push(newMember.fullName);
+                    }
+                }
             }
         }
 
-        // Store extraction (assign to PA)
-        const paId = caseData.members.find(m => m.relationship === "PA")?.id;
-        if (paId) {
-            caseData.extracted.familyInfoByMember[paId] = extract;
-            doc.personId = paId;
+        // Link document specifically to the "Applicant" in this form
+        const member = matchFamilyInfoToMember(caseData.members, extract);
+        if (member) {
+            caseData.extracted.familyInfoByMember[member.id] = extract;
+            doc.personId = member.id;
+        } else {
+            doc.personId = "unassigned";
         }
     }
 
@@ -143,7 +168,7 @@ export async function analyzeCase(caseId: string) {
         const extract = await extractScheduleA(doc.rawText);
         if (!extract) continue;
 
-        // Match to member by name/DOB
+        // Match to member by name/DOB (fuzzy robust)
         const member = matchScheduleAToMember(caseData.members, extract);
 
         if (member) {
@@ -157,23 +182,7 @@ export async function analyzeCase(caseId: string) {
                 member.age = calculateAge(extract.identity.dob) || undefined;
             }
         } else {
-            // Create new member if not found (fallback)
-            const name = extract.identity?.name || doc.meta?.detectedName || "Unknown";
-            const newMemberId = uuidv4();
-            const age = calculateAge(extract.identity?.dob || undefined);
-
-            caseData.members.push({
-                id: newMemberId,
-                fullName: name,
-                relationship: "OTHER",
-                dob: extract.identity?.dob || undefined,
-                dobPrecision: extract.identity?.dob ? "DAY" : "UNKNOWN",
-                age: age || undefined,
-                aliases: []
-            });
-
-            caseData.extracted.scheduleAByMember[newMemberId] = extract;
-            doc.personId = newMemberId;
+            doc.personId = "unassigned";
         }
     }
 
@@ -194,6 +203,24 @@ export async function analyzeCase(caseId: string) {
                         caseData.extracted.supportingByMember[member.id] = [];
                     }
                     caseData.extracted.supportingByMember[member.id].push(...info);
+                }
+            }
+        }
+    }
+
+    // 6.5. Extract Education Evidence Claims
+    for (const doc of caseData.documents) {
+        if (doc.kind === "SUPPORTING" && doc.supportType) {
+            const isEducationDoc = /education|transcript|degree|wes|certificate|diploma/i.test(doc.supportType);
+            if (isEducationDoc && doc.personId) {
+                const claims = await extractEducationClaims(doc.rawText, doc.supportType);
+                if (claims.length > 0) {
+                    if (!caseData.extracted.educationClaimsByMember[doc.personId]) {
+                        caseData.extracted.educationClaimsByMember[doc.personId] = [];
+                    }
+                    // Add document ID to each claim for traceability
+                    const claimsWithDoc = claims.map(c => ({ ...c, _docId: doc.id, _filename: doc.filename }));
+                    caseData.extracted.educationClaimsByMember[doc.personId].push(...claimsWithDoc);
                 }
             }
         }

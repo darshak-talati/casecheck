@@ -48,13 +48,12 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
         await bulkToggleFindings(caseData.id, action);
     };
 
-    const findingsByMember = (showVerified ? caseData.findings : caseData.findings.filter(f => f.severity !== 'INFO'))
-        .reduce((acc, f) => {
-            const m = f.memberName || "General";
-            if (!acc[m]) acc[m] = [];
-            acc[m].push(f);
-            return acc;
-        }, {} as Record<string, Finding[]>);
+    const findingsByMember = caseData.findings.reduce((acc, f) => {
+        const m = f.memberName || "General";
+        if (!acc[m]) acc[m] = [];
+        acc[m].push(f);
+        return acc;
+    }, {} as Record<string, Finding[]>);
 
     const generateEmail = () => {
         const selectedFindings = caseData.findings.filter(f => f.includeInEmail);
@@ -143,8 +142,8 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
                                             <p className="font-medium">{doc.filename}</p>
                                             <div className="flex gap-2 text-xs">
                                                 <span className="bg-gray-100 px-1 rounded">{doc.kind}</span>
-                                                {doc.formType && <span className="bg-blue-100 text-blue-800 px-1 rounded">{doc.formType}</span>}
-                                                {doc.supportType && <span className="bg-green-100 text-green-800 px-1 rounded">{doc.supportType}</span>}
+                                                {doc.formType && <span className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded uppercase tracking-wide font-bold">{doc.formType.replace('_', ' ')}</span>}
+                                                {doc.supportType && <span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-medium">{doc.supportType}</span>}
                                             </div>
                                         </div>
                                     </div>
@@ -157,9 +156,9 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
                     )}
 
                     {activeTab === "findings" && (
-                        <div className="space-y-6">
+                        <div className="space-y-8">
                             <div className="flex justify-between items-center mb-4">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-4">
                                     <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                                         <input
                                             type="checkbox"
@@ -175,60 +174,119 @@ export default function CaseResultView({ initialCase, initialRules }: { initialC
                                     <Button variant="outline" size="sm" onClick={() => handleBulkToggle('clearAll')}>Clear Selection</Button>
                                 </div>
                             </div>
-                            {Object.entries(findingsByMember).length === 0 && (
-                                <div className="text-center py-20 bg-slate-50 rounded-lg border-2 border-dashed">
-                                    <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
-                                    <h3 className="text-lg font-medium text-gray-900">No issues found</h3>
-                                    <p className="text-gray-500">Enable "Show Verified Checks" to see what was validated.</p>
-                                </div>
-                            )}
-                            {Object.entries(findingsByMember).map(([member, list]) => (
-                                <div key={member}>
-                                    <h3 className="font-bold text-lg mb-2">{member}</h3>
-                                    <div className="space-y-3">
-                                        {list.map(f => (
-                                            <div key={f.id} className={`p-4 border-l-4 rounded shadow-sm bg-white flex gap-4 ${f.severity === 'ERROR' ? 'border-red-500' :
-                                                f.severity === 'WARNING' ? 'border-yellow-500' :
-                                                    'border-green-500 bg-green-50/10'
-                                                }`}>
-                                                <div className="flex-shrink-0 pt-1">
-                                                    {f.severity === 'INFO' ? (
-                                                        <CheckCircle className="w-5 h-5 text-green-500" />
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => handleToggleFinding(f.id, !f.includeInEmail)}
-                                                            className="text-gray-400 hover:text-primary transition-colors"
-                                                            title={f.includeInEmail ? "Remove from email" : "Include in email"}
-                                                        >
-                                                            {f.includeInEmail ? <CheckSquare className="w-5 h-5 text-primary" /> : <Square className="w-5 h-5" />}
-                                                        </button>
-                                                    )}
-                                                </div>
-                                                <div className="flex-grow">
-                                                    <div className="flex justify-between">
-                                                        <h4 className="font-semibold">{f.summary}</h4>
-                                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${f.severity === 'ERROR' ? 'bg-red-100 text-red-800' :
-                                                            f.severity === 'WARNING' ? 'bg-yellow-100 text-yellow-800' :
-                                                                'bg-green-100 text-green-800'
-                                                            }`}>{f.severity}</span>
+
+                            {/* Section: Issues to Fix */}
+                            <div>
+                                <h3 className="text-xl font-bold text-red-700 mb-4 flex items-center gap-2">
+                                    <AlertTriangle className="w-5 h-5" /> Issues to Fix
+                                </h3>
+                                {Object.keys(findingsByMember).filter(m => findingsByMember[m].some(f => f.status === 'FAIL')).length === 0 ? (
+                                    <div className="text-center py-10 bg-slate-50 rounded-lg border-2 border-dashed">
+                                        <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                                        <h3 className="text-lg font-medium text-gray-900">No issues found</h3>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        {Object.entries(findingsByMember).map(([member, list]) => {
+                                            const failures = list.filter(f => f.status === 'FAIL');
+                                            if (failures.length === 0) return null;
+                                            return (
+                                                <div key={`fail-${member}`}>
+                                                    <h4 className="font-bold text-md mb-2 text-gray-700">{member}</h4>
+                                                    <div className="space-y-3">
+                                                        {failures.map(f => (
+                                                            <div key={f.id} className={`p-4 border-l-4 rounded shadow-sm bg-white flex gap-4 ${f.severity === 'ERROR' ? 'border-red-500' : 'border-yellow-500'}`}>
+                                                                <div className="flex-shrink-0 pt-1">
+                                                                    <button
+                                                                        onClick={() => handleToggleFinding(f.id, !f.includeInEmail)}
+                                                                        className="text-gray-400 hover:text-primary transition-colors"
+                                                                        title={f.includeInEmail ? "Remove from email" : "Include in email"}
+                                                                    >
+                                                                        {f.includeInEmail ? <CheckSquare className="w-5 h-5 text-primary" /> : <Square className="w-5 h-5" />}
+                                                                    </button>
+                                                                </div>
+                                                                <div className="flex-grow">
+                                                                    <div className="flex justify-between">
+                                                                        <h4 className="font-semibold">{f.summary}</h4>
+                                                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${f.severity === 'ERROR' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                                                            {f.severity}
+                                                                        </span>
+                                                                    </div>
+                                                                    <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{f.clientMessage}</p>
+                                                                    {f.recommendation && <p className="text-xs text-gray-500 mt-2 italic font-medium">Recommendation: {f.recommendation}</p>}
+                                                                </div>
+                                                            </div>
+                                                        ))}
                                                     </div>
-                                                    <p className="text-sm text-gray-600 mt-1">{f.clientMessage}</p>
-                                                    {f.recommendation && f.severity !== 'INFO' && <p className="text-xs text-gray-500 mt-2 italic font-medium">Recomendation: {f.recommendation}</p>}
-                                                    <p className="text-[10px] text-gray-400 mt-2 font-mono">{f.ruleId}</p>
-                                                    {f.details && (
-                                                        <details className="mt-2 text-xs text-gray-500">
-                                                            <summary className="cursor-pointer hover:text-blue-600">Trace Data</summary>
-                                                            <pre className="mt-1 bg-gray-50 p-2 rounded overflow-auto border text-[10px]">
-                                                                {JSON.stringify(f.details, null, 2)}
-                                                            </pre>
-                                                        </details>
-                                                    )}
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Section: Verified Checks */}
+                            {showVerified && (
+                                <div className="pt-6 border-t">
+                                    <h3 className="text-xl font-bold text-green-700 mb-4 flex items-center gap-2">
+                                        <CheckCircle className="w-5 h-5" /> Verified Checks
+                                    </h3>
+                                    <div className="space-y-4">
+                                        {Object.entries(findingsByMember).map(([member, list]) => {
+                                            const passes = list.filter(f => f.status === 'PASS');
+                                            if (passes.length === 0) return null;
+                                            return (
+                                                <div key={`pass-${member}`}>
+                                                    <h4 className="font-bold text-sm mb-2 text-gray-500 uppercase tracking-tight">{member}</h4>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                        {passes.map(f => (
+                                                            <div key={f.id} className="p-3 border rounded-lg bg-green-50/30 flex gap-3 items-start border-green-100 shadow-sm transition-all hover:bg-green-50/50">
+                                                                <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
+                                                                <div className="flex-grow">
+                                                                    <div className="flex justify-between items-start gap-2">
+                                                                        <h5 className="text-sm font-semibold text-green-900">{f.verifiedLabel || f.summary}</h5>
+                                                                        <span className="text-[9px] font-bold bg-green-200 text-green-800 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">Verified</span>
+                                                                    </div>
+                                                                    <p className="text-xs text-green-700/80 mt-0.5 whitespace-pre-line">{f.clientMessage}</p>
+                                                                    {f.details && f.details.scheduleRow && (
+                                                                        <div className="mt-2 p-2 bg-white/60 rounded border border-green-100 text-[10px] space-y-1">
+                                                                            <p className="font-bold text-green-800 uppercase text-[9px]">Verification Trace</p>
+                                                                            <div className="grid grid-cols-2 gap-2">
+                                                                                <div>
+                                                                                    <p className="text-gray-500">Schedule Row:</p>
+                                                                                    <p className="font-medium">{f.details.scheduleRow.fieldOfStudy} @ {f.details.scheduleRow.institution}</p>
+                                                                                    <p>{f.details.scheduleRow.fromMonth} to {f.details.scheduleRow.toMonth}</p>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <p className="text-gray-500">Evidence Found:</p>
+                                                                                    <p className="font-medium">{f.details.evidence.credential} at {f.details.evidence.institution}</p>
+                                                                                    <p className="italic">" {f.details.anchor.snippet} "</p>
+                                                                                </div>
+                                                                            </div>
+                                                                            <div className="mt-1 pt-1 border-t border-green-100 flex justify-between items-center text-gray-500">
+                                                                                <span>Match Score: {Math.round(f.details.score * 100)}%</span>
+                                                                                <span>Anchor: {f.details.anchor.kind.replace('_', ' ')}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                    {f.details && (
+                                                                        <details className="mt-1">
+                                                                            <summary className="text-[10px] text-green-600 cursor-pointer hover:underline">View Raw JSON</summary>
+                                                                            <pre className="mt-1 text-[9px] bg-white/50 p-2 rounded border border-green-100 overflow-auto max-h-32">
+                                                                                {JSON.stringify(f.details, null, 2)}
+                                                                            </pre>
+                                                                        </details>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </div>
-                            ))}
+                            )}
                         </div>
                     )}
 
